@@ -4,13 +4,14 @@ use anyhow::Error;
 use btleplug::api::WriteType;
 use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
+use tokio::sync::watch::Receiver;
 use tokio::time;
 
 use crate::calendar::CalendarInfo;
 
 const TARGET_DEVICE: &str = "DoorSign";
 
-pub async fn watch_for_device(mut rx: tokio::sync::watch::Receiver<Option<CalendarInfo<'_>>>) -> ! {
+pub async fn watch_for_device(mut rx: Receiver<Option<CalendarInfo<'_>>>) -> ! {
     loop {
         rx.changed().await.ok();
 
@@ -52,7 +53,7 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
     let uuid = uuid::Builder::from_u128(0).into_uuid();
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
-    let adapter = adapters.iter().nth(0).expect("No bluetooth adapter found");
+    let adapter = adapters.first().expect("No bluetooth adapter found");
     let info = adapter.adapter_info().await?;
 
     println!("Found bluetooth device: {}", info);
@@ -93,7 +94,7 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
         let chars = p.characteristics();
         let target_char = chars.iter().find(|x| x.uuid == uuid);
 
-        if !target_char.is_some() {
+        if target_char.is_none() {
             println!("Couln't find characteristic on target device: {}", uuid);
             continue;
         }

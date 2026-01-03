@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use tokio::sync::watch::Sender;
 use tokio::time;
 
 #[derive(Copy, Clone, Debug, Serialize)]
 pub enum Status {
     Busy,
-    Free,
-    Focus,
+    // Free,
+    // Focus,
 }
 
 #[derive(Copy, Clone, Debug, Serialize)]
@@ -35,7 +36,7 @@ impl<'a> CalendarInfo<'a> {
     }
 }
 
-pub async fn sync_task<'a>(tx: tokio::sync::watch::Sender<Option<CalendarInfo<'a>>>) -> ! {
+pub async fn sync_task<'a>(tx: Sender<Option<CalendarInfo<'a>>>) -> ! {
     loop {
         if let Ok(latest) = CalendarInfo::fetch_current_status().await {
             tx.send(Some(latest)).ok();
