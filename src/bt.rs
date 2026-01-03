@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use anyhow::Error;
 use btleplug::api::WriteType;
 use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
@@ -35,12 +36,9 @@ pub async fn watch_for_device(mut rx: tokio::sync::watch::Receiver<Option<Calend
 
         for _ in 0..10 {
             match write_data(str.as_bytes()).await {
-                Ok(true) => {
+                Ok(_) => {
                     println!("Updated!");
                     break;
-                }
-                Ok(false) => {
-                    println!("Couldn't send data");
                 }
                 Err(e) => {
                     println!("Error sending data: {}", e);
@@ -50,12 +48,11 @@ pub async fn watch_for_device(mut rx: tokio::sync::watch::Receiver<Option<Calend
     }
 }
 
-pub async fn write_data(data: &[u8]) -> anyhow::Result<bool> {
+pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
     let uuid = uuid::Builder::from_u128(0).into_uuid();
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
     let adapter = adapters.iter().nth(0).expect("No bluetooth adapter found");
-
     let info = adapter.adapter_info().await?;
 
     println!("Found bluetooth device: {}", info);
@@ -117,5 +114,9 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<bool> {
 
     adapter.stop_scan().await?;
 
-    Ok(sent)
+    if sent {
+        Ok(())
+    } else {
+        Err(Error::msg("Couldn't find device"))
+    }
 }
