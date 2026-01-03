@@ -5,7 +5,26 @@ use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
 use tokio::time;
 
+use crate::calendar::CalendarInfo;
+
 const TARGET_DEVICE: &str = "DoorSign";
+
+pub async fn watch_for_device(mut rx: tokio::sync::watch::Receiver<Option<CalendarInfo<'_>>>) -> ! {
+    loop {
+        rx.changed().await.ok();
+
+        println!("New calendar info, sending to device");
+
+        let str = match *rx.borrow() {
+            Some(info) => Some(serde_json::to_string(&info).unwrap_or("null".to_string())),
+            None => None,
+        };
+
+        if let Some(str) = str {
+            write_data(str.as_bytes()).await.ok();
+        }
+    }
+}
 
 pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
     let uuid = uuid::Builder::from_u128(0).into_uuid();

@@ -1,13 +1,18 @@
+use futures::future::join;
+
+use crate::calendar::CalendarInfo;
+
 mod bt;
 mod calendar;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let status = calendar::CalendarInfo::fetch_current_status().await?;
-    let ser = serde_json::to_string(&status)?;
+    let (tx, rx) = tokio::sync::watch::channel::<Option<CalendarInfo>>(None);
 
-    println!("{}", ser);
+    let bt_handle = tokio::spawn(bt::watch_for_device(rx));
+    let cal_handle = tokio::spawn(calendar::sync_task(tx));
 
-    bt::write_data("Whatever".as_bytes()).await?;
+    let _ = join(bt_handle, cal_handle).await;
+
     Ok(())
 }
