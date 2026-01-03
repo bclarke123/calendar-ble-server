@@ -13,20 +13,44 @@ pub async fn watch_for_device(mut rx: tokio::sync::watch::Receiver<Option<Calend
     loop {
         rx.changed().await.ok();
 
-        println!("New calendar info, sending to device");
+        let obj = {
+            let obj = *rx.borrow();
+            if obj.is_none() {
+                println!("New calendar info is empty");
+                continue;
+            }
 
-        let str = match *rx.borrow() {
-            Some(info) => Some(serde_json::to_string(&info).unwrap_or("null".to_string())),
-            None => None,
+            obj.unwrap()
         };
 
-        if let Some(str) = str {
-            write_data(str.as_bytes()).await.ok();
+        println!("New calendar info, sending to device");
+
+        let ser = serde_json::to_string(&obj);
+        if let Err(e) = ser {
+            println!("Couldn't serialize calendar info: {}", e); // ???
+            continue;
+        }
+
+        let str = ser.unwrap();
+
+        for _ in 0..10 {
+            match write_data(str.as_bytes()).await {
+                Ok(true) => {
+                    println!("Updated!");
+                    break;
+                }
+                Ok(false) => {
+                    println!("Couldn't send data");
+                }
+                Err(e) => {
+                    println!("Error sending data: {}", e);
+                }
+            }
         }
     }
 }
 
-pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
+pub async fn write_data(data: &[u8]) -> anyhow::Result<bool> {
     let uuid = uuid::Builder::from_u128(0).into_uuid();
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
@@ -43,6 +67,8 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
     time::sleep(Duration::from_secs(2)).await;
 
     let peripherals = adapter.peripherals().await?;
+
+    let mut sent = false;
 
     for p in &peripherals {
         let properties = p.properties().await?;
@@ -83,6 +109,7 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
             println!("Error writing to characteristic: {}", e);
         } else {
             println!("Write successful!");
+            sent = true;
         }
 
         p.disconnect().await?;
@@ -90,5 +117,5 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
 
     adapter.stop_scan().await?;
 
-    Ok(())
+    Ok(sent)
 }
