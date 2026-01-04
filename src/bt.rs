@@ -54,9 +54,9 @@ pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
     let adapter = adapters.first().expect("No bluetooth adapter found");
-    let info = adapter.adapter_info().await?;
 
-    println!("Found bluetooth device: {}", info);
+    // let info = adapter.adapter_info().await?;
+    // println!("Found bluetooth device: {}", info);
 
     if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
         eprintln!("Couldn't start bt scan: {}", e);
