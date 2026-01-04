@@ -1,5 +1,5 @@
 use futures::future::join;
-use tokio::sync::watch::channel;
+use tokio::sync::watch;
 
 use crate::calendar::CalendarInfo;
 
@@ -8,7 +8,7 @@ mod calendar;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let (tx, rx) = channel::<Option<CalendarInfo>>(None);
+    let (tx, rx) = watch::channel::<Option<CalendarInfo>>(None);
 
     let bt_handle = tokio::spawn(bt::watch_for_device(rx));
     let cal_handle = tokio::spawn(calendar::sync_task(tx));

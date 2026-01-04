@@ -4,14 +4,14 @@ use anyhow::Error;
 use btleplug::api::WriteType;
 use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
 use btleplug::platform::Manager;
-use tokio::sync::watch::Receiver;
+use tokio::sync::watch;
 use tokio::time;
 
 use crate::calendar::CalendarInfo;
 
 const TARGET_DEVICE: &str = "DoorSign";
 
-pub async fn watch_for_device(mut rx: Receiver<Option<CalendarInfo>>) -> ! {
+pub async fn watch_for_device(mut rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
     loop {
         rx.changed().await.ok();
 

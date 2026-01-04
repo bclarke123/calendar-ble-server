@@ -5,7 +5,7 @@ use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveTime, Offset, TimeZon
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{fs, sync::watch::Sender, time};
+use tokio::{fs, sync::watch, time};
 
 const TOKEN_FILE: &str = "token.json";
 static CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
@@ -267,7 +267,7 @@ impl CalendarClient {
     }
 }
 
-pub async fn sync_task(tx: Sender<Option<CalendarInfo>>) -> ! {
+pub async fn sync_task(tx: watch::Sender<Option<CalendarInfo>>) -> ! {
     let mut calendar = CalendarClient::new().await.unwrap();
 
     loop {
