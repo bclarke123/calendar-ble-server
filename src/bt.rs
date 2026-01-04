@@ -11,18 +11,18 @@ use crate::calendar::CalendarInfo;
 
 const TARGET_DEVICE: &str = "DoorSign";
 
-pub async fn watch_for_device(mut rx: Receiver<Option<CalendarInfo<'_>>>) -> ! {
+pub async fn watch_for_device(mut rx: Receiver<Option<CalendarInfo>>) -> ! {
     loop {
         rx.changed().await.ok();
 
         let obj = {
-            let obj = *rx.borrow();
+            let obj = rx.borrow();
             if obj.is_none() {
                 println!("New calendar info is empty");
                 continue;
             }
 
-            obj.unwrap()
+            obj.clone()
         };
 
         println!("New calendar info, sending to device");
