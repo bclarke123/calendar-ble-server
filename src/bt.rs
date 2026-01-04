@@ -77,11 +77,9 @@ pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
 
 fn get_payload(rx: &watch::Receiver<Option<CalendarInfo>>) -> anyhow::Result<String> {
     let obj = rx.borrow().clone();
-
-    println!("New calendar info, sending to device");
-
     let str = serde_json::to_string(&obj)?;
 
+    println!("New calendar info, sending to device");
     Ok(str)
 }
 
@@ -93,9 +91,8 @@ async fn write_data<P: Peripheral>(peripheral: &P, data: &[u8], uuid: Uuid) -> a
     peripheral.discover_services().await?;
 
     let chars = peripheral.characteristics();
-    let target_char = chars.iter().find(|x| x.uuid == uuid);
 
-    let target_char = match target_char {
+    let target_char = match chars.iter().find(|x| x.uuid == uuid) {
         Some(char) => char,
         None => anyhow::bail!("Couln't find characteristic on target device: {}", uuid),
     };
