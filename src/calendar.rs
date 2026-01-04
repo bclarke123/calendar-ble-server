@@ -90,7 +90,7 @@ impl CalendarItem {
         let hour = start.hour();
         let minute = start.minute();
 
-        return [hour as u8, minute as u8];
+        [hour as u8, minute as u8]
     }
 
     pub fn duration(&self) -> u8 {
