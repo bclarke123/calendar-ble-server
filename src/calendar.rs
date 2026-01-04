@@ -1,7 +1,7 @@
 use std::{sync::LazyLock, time::Duration};
 
 use anyhow::Context;
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveTime, Offset, TimeZone, Timelike};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,8 +19,8 @@ pub enum FetchError {
 #[derive(Copy, Clone, Debug, Serialize)]
 pub enum Status {
     Busy,
-    // Free,
-    // Focus,
+    Free,
+    Focus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,12 +30,93 @@ struct CalendarDate {
     date_time: Option<DateTime<FixedOffset>>,
 }
 
+impl CalendarDate {
+    pub fn datetime(&self) -> Option<DateTime<FixedOffset>> {
+        if self.date_time.is_some() {
+            return self.date_time;
+        }
+
+        if self.date.is_some() {
+            let date_time = self.date.unwrap().and_hms_opt(0, 0, 0).unwrap();
+            let offset = Local::now().offset().fix();
+
+            let ret = offset.from_local_datetime(&date_time).unwrap();
+            return Some(ret);
+        }
+
+        None
+    }
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CalendarItem {
     start: Option<CalendarDate>,
     end: Option<CalendarDate>,
     summary: String,
-    eventType: Option<String>,
+    event_type: Option<String>,
+}
+
+impl CalendarItem {
+    pub fn is_reasonable_length(&self) -> bool {
+        if self.start.is_none() || self.end.is_none() {
+            return false;
+        }
+
+        let start = self.start.as_ref().unwrap().datetime();
+        let end = self.end.as_ref().unwrap().datetime();
+
+        if start.is_none() || end.is_none() {
+            return false;
+        }
+
+        let start = start.unwrap();
+        let end = end.unwrap();
+
+        if start > Local::now() || end < Local::now() {
+            return false;
+        }
+
+        let duration = end - start;
+        Duration::from_secs_f32(duration.as_seconds_f32()) < Duration::from_hours(2) + Duration::from_mins(30)
+    }
+
+    pub fn start_time(&self) -> [u8; 2] {
+        if self.start.is_none() {
+            return [0, 0];
+        }
+
+        let start = self.start.as_ref().unwrap().datetime().unwrap();
+        let hour = start.hour();
+        let minute = start.minute();
+
+        return [hour as u8, minute as u8];
+    }
+
+    pub fn duration(&self) -> u8 {
+        if self.start.is_none() || self.end.is_none() {
+            return 0;
+        }
+
+        let start = self.start.as_ref().unwrap().datetime().unwrap();
+        let end = self.end.as_ref().unwrap().datetime().unwrap();
+
+        let duration = end - start;
+        (duration.num_minutes() / 5) as u8
+    }
+
+    pub fn status_type(&self) -> Status {
+        match &self.event_type {
+            None => Status::Free,
+            Some(str) => {
+                if "focusTime" == str {
+                    Status::Focus
+                } else {
+                    Status::Busy
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,20 +191,36 @@ impl CalendarClient {
 
         println!("Received response");
 
-        let json = resp.json::<CalendarResponse>().await?;
+        let calendar_response = resp.json::<CalendarResponse>().await?;
 
-        println!("{:?}", json);
+        // Now we've got zero or more calendar events, let's throw out any that
+        // are over 2.5 hours (probably multi-day or large blocks)
+        let events = calendar_response.items.into_iter().filter(|event| event.is_reasonable_length()).collect::<Vec<_>>();
 
-        Ok(CalendarInfo {
-            status: Status::Busy,
-            start_time: [17, 0],
-            duration: Self::get_duration(Duration::from_mins(45)),
-            label: "Important Stuff".to_string(),
-        })
-    }
+        let mut ret = CalendarInfo {
+            status: Status::Free,
+            start_time: [9, 0],
+            duration: (8 * 60 / 5) as u8, // TODO figure out when my next meeting actually is
+            label: "Free".to_string()
+        };
 
-    fn get_duration(duration: Duration) -> u8 {
-        ((duration.as_secs() / 60) / 5).clamp(0, 255) as u8
+        // Now figure out overlaps - if I have a focus block and a meeting, the meeting is probably
+        // interrupting the focus.
+        for event in events {
+            let event_status = event.status_type();
+            let supercedes = matches!(ret.status, Status::Free) || matches!(event_status, Status::Busy);
+
+            if supercedes {
+                ret.status = event_status;
+                ret.start_time = event.start_time();
+                ret.duration = event.duration();
+                ret.label = event.summary.clone();
+            }
+        }
+
+        println!("Status for device: {:?}", ret);
+
+        Ok(ret)
     }
 
     async fn refresh_token(&mut self) -> anyhow::Result<()> {
