@@ -1,123 +1,110 @@
 use std::time::Duration;
 
-use anyhow::Error;
-use btleplug::api::WriteType;
+use btleplug::api::{CentralEvent, WriteType};
 use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
-use btleplug::platform::Manager;
+use btleplug::platform::{Manager};
+use futures::StreamExt;
 use tokio::sync::watch;
-use tokio::time;
+use tokio::time::{self, Instant};
+use uuid::Uuid;
 
 use crate::calendar::CalendarInfo;
 
 const TARGET_DEVICE: &str = "DoorSign";
+const TARGET_UUID_STR: &str = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+const COOLDOWN_SEC: u64 = 30;
 
-pub async fn watch_for_device(mut rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
+pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
+    let uuid = uuid::Uuid::parse_str(TARGET_UUID_STR).expect("Invalid UUID");
+
+    let manager = Manager::new().await.expect("Couldn't create bluetooth manager");
+    let adapters = manager.adapters().await.expect("Couldn't get bluetooth adapters");
+    let adapter = adapters.first().expect("No bluetooth adapter found");
+
+    let mut filter = ScanFilter:: default();
+    filter.services.push(uuid);
+
+    adapter.start_scan(filter.clone()).await.expect("Couldn't start bluetooth scan");
+    let mut last_update = Instant::now() - Duration::from_secs(COOLDOWN_SEC);
+
     loop {
-        rx.changed().await.ok();
+        let mut events = adapter.events().await.expect("Couldn't get bluetooth events");
 
-        let obj = {
-            let obj = rx.borrow();
-            if obj.is_none() {
-                println!("New calendar info is empty");
-                continue;
-            }
+        while let Some(event) = events.next().await {
+            match event {
+                CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
+                    let peripheral = adapter.peripheral(&id).await.expect("Couldn't get peripheral");
+                    let props = match peripheral.properties().await.expect("Couldn't get peripheral properties") {
+                        Some(props) => props,
+                        None => continue
+                    };
 
-            obj.clone()
-        };
+                    let local_name = props.local_name.unwrap_or_default();
+                    if !local_name.contains(TARGET_DEVICE) {
+                        continue;
+                    }
 
-        println!("New calendar info, sending to device");
+                    if Instant::now() - last_update < Duration::from_secs(COOLDOWN_SEC) {
+                        continue;
+                    }
 
-        let ser = serde_json::to_string(&obj);
-        if let Err(e) = ser {
-            println!("Couldn't serialize calendar info: {}", e); // ???
-            continue;
-        }
+                    println!("Got wakeup call, sending latest data");
 
-        let str = ser.unwrap();
+                    adapter.stop_scan().await.ok();
 
-        for _ in 0..10 {
-            match write_data(str.as_bytes()).await {
-                Ok(_) => {
-                    println!("Updated!");
-                    break;
+                    let data = match get_payload(&rx) {
+                        Ok(str) => str,
+                        Err(e) => {
+                            println!("Error serializing calendar data: {}", e);
+                            adapter.start_scan(filter.clone()).await.expect("Couldn't start bluetooth scan");
+                            continue
+                        }
+                    };
+
+                    if let Err(e) = write_data(&peripheral, data.as_bytes(), uuid).await {
+                        println!("Error writing calendar data: {}", e);
+                    } else {
+                        last_update = Instant::now();
+                    }
+
+                    adapter.start_scan(filter.clone()).await.expect("Couldn't start bluetooth scan");
                 }
-                Err(e) => {
-                    println!("Error sending data: {}", e);
-                }
+                _ => {}
             }
         }
     }
 }
 
-pub async fn write_data(data: &[u8]) -> anyhow::Result<()> {
-    let uuid = uuid::Builder::from_u128(0).into_uuid();
-    let manager = Manager::new().await?;
-    let adapters = manager.adapters().await?;
-    let adapter = adapters.first().expect("No bluetooth adapter found");
+fn get_payload(rx: &watch::Receiver<Option<CalendarInfo>>) -> anyhow::Result<String> {
+    let obj = rx.borrow().clone();
 
-    // let info = adapter.adapter_info().await?;
-    // println!("Found bluetooth device: {}", info);
+    println!("New calendar info, sending to device");
 
-    if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
-        eprintln!("Couldn't start bt scan: {}", e);
-    }
+    let str = serde_json::to_string(&obj)?;
 
-    time::sleep(Duration::from_secs(2)).await;
+    Ok(str)
+}
 
-    let peripherals = adapter.peripherals().await?;
+// async fn watch_for_device()
 
-    let mut sent = false;
+async fn write_data<P: Peripheral>(peripheral: &P, data: &[u8], uuid: Uuid) -> anyhow::Result<()> {
 
-    for p in &peripherals {
-        let properties = p.properties().await?;
-        let is_target = properties.iter().any(|x| {
-            x.local_name
-                .as_ref()
-                .is_some_and(|k| k.contains(TARGET_DEVICE))
-        });
+    time::timeout(Duration::from_secs(5), peripheral.connect()).await??;
+    peripheral.discover_services().await?;
 
-        if !is_target {
-            continue;
-        }
+    let chars = peripheral.characteristics();
+    let target_char = chars.iter().find(|x| x.uuid == uuid);
 
-        println!("Found target device, connecting");
+    let target_char = match target_char {
+        Some(char) => char,
+        None => anyhow::bail!("Couln't find characteristic on target device: {}", uuid),
+    };
 
-        adapter.stop_scan().await?;
+    println!("Writing status...");
 
-        if let Err(e) = p.connect().await {
-            println!("Couldn't connect to target device: {}", e);
-            continue;
-        }
+    peripheral.write(target_char, data, WriteType::WithResponse).await?;
 
-        p.discover_services().await?;
+    peripheral.disconnect().await?;
 
-        let chars = p.characteristics();
-        let target_char = chars.iter().find(|x| x.uuid == uuid);
-
-        if target_char.is_none() {
-            println!("Couln't find characteristic on target device: {}", uuid);
-            continue;
-        }
-
-        let target_char = target_char.unwrap();
-
-        println!("Writing status...");
-
-        if let Err(e) = p.write(target_char, data, WriteType::WithResponse).await {
-            println!("Error writing to characteristic: {}", e);
-        } else {
-            println!("Write successful!");
-            sent = true;
-        }
-
-        p.disconnect().await?;
-    }
-
-    adapter.stop_scan().await?;
-
-    if sent {
-        Ok(())
-    } else {
-        Err(Error::msg("Couldn't find device"))
-    }
+    Ok(())
 }
