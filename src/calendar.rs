@@ -200,12 +200,12 @@ impl CalendarClient {
         let mut ret = CalendarInfo {
             status: Status::Free,
             start_time: [9, 0],
-            duration: (8 * 60 / 5) as u8, // TODO figure out when my next meeting actually is
+            duration: (8 * 60 / 5) as u8,
             label: "Free".to_string()
         };
 
-        // Now figure out overlaps - if I have a focus block and a meeting, the meeting is probably
-        // interrupting the focus.
+        // Now figure out overlaps - if I have a focus block and a meeting, the meeting
+        // is probably interrupting the focus.
         for event in events {
             let event_status = event.status_type();
             let supercedes = matches!(ret.status, Status::Free) || matches!(event_status, Status::Busy);
@@ -217,6 +217,8 @@ impl CalendarClient {
                 ret.label = event.summary.clone();
             }
         }
+
+        // TODO If we're free right now, figure out when we're free until
 
         println!("Status for device: {:?}", ret);
 
@@ -275,7 +277,7 @@ pub async fn sync_task(tx: Sender<Option<CalendarInfo>>) -> ! {
             },
             Err(e) => {
                 if let Some(err) = e.downcast_ref::<FetchError>() && matches!(err, FetchError::Unauthorized) {
-                    calendar.refresh_token().await.ok();
+                    calendar.refresh_token().await.ok(); // and try again in a minute
                 } else {
                     println!("Error fetching status: {}", e);
                 }
