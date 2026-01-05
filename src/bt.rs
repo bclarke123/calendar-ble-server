@@ -21,7 +21,7 @@ pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
     let adapters = manager.adapters().await.expect("Couldn't get bluetooth adapters");
     let adapter = adapters.first().expect("No bluetooth adapter found");
 
-    let mut filter = ScanFilter:: default();
+    let mut filter = ScanFilter::default();
     filter.services.push(uuid);
 
     adapter.start_scan(filter.clone()).await.expect("Couldn't start bluetooth scan");
@@ -81,7 +81,7 @@ async fn write_data<P: Peripheral>(peripheral: &P, data: &[u8], uuid: Uuid) -> a
 
     let target_char = match chars.iter().find(|x| x.uuid == uuid) {
         Some(char) => char,
-        None => anyhow::bail!("Couln't find characteristic on target device: {}", uuid),
+        None => anyhow::bail!("Couldn't find characteristic on target device: {}", uuid),
     };
 
     println!("Writing status...");
