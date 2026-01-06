@@ -105,7 +105,7 @@ async fn write_data<P: Peripheral>(peripheral: &P, data: &[u8], uuid: Uuid) -> a
 
     let target_char = match chars.iter().find(|x| x.uuid == uuid) {
         Some(char) => char,
-        None => anyhow::bail!("Couln't find characteristic on target device: {}", uuid),
+        None => anyhow::bail!("Couldn't find characteristic on target device: {}", uuid),
     };
 
     println!("Writing status...");
