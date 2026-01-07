@@ -3,7 +3,9 @@ use std::time::Duration;
 use btleplug::api::{Central as _, Manager as _, Peripheral, ScanFilter};
 use btleplug::api::{CentralEvent, WriteType};
 use btleplug::platform::Manager;
+use chrono::Local;
 use futures::StreamExt;
+use serde::Serialize;
 use tokio::sync::watch;
 use tokio::time::{self, Instant};
 use uuid::Uuid;
@@ -11,11 +13,18 @@ use uuid::Uuid;
 use crate::calendar::CalendarInfo;
 
 const TARGET_DEVICE: &str = "DoorSign";
-const TARGET_UUID_STR: &str = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+const TARGET_CHAR_UUID_STR: &str = "9ecadc24-0ee5-a9e0-93f3-a3b50200406e";
 const COOLDOWN_SEC: u64 = 30;
 
+#[derive(Debug, Serialize)]
+pub struct DisplayRequest {
+    current_time: String,
+    padding: String,
+    calendar_info: CalendarInfo,
+}
+
 pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
-    let uuid = uuid::Uuid::parse_str(TARGET_UUID_STR).expect("Invalid UUID");
+    let char_uuid = uuid::Uuid::parse_str(TARGET_CHAR_UUID_STR).expect("Invalid UUID");
 
     let manager = Manager::new()
         .await
@@ -26,7 +35,7 @@ pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
         .expect("Couldn't get bluetooth adapters");
     let adapter = adapters.first().expect("No bluetooth adapter found");
 
-    let mut filter = ScanFilter::default();
+    let filter = ScanFilter::default();
     // filter.services.push(uuid);
 
     adapter
@@ -63,7 +72,7 @@ pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
                     continue;
                 }
 
-                println!("Event from {}", local_name);
+                // println!("Event from {}", local_name);
 
                 if Instant::now() - last_update < Duration::from_secs(COOLDOWN_SEC) {
                     continue;
@@ -72,13 +81,24 @@ pub async fn run(rx: watch::Receiver<Option<CalendarInfo>>) -> ! {
                 println!("Got wakeup call, sending latest data");
 
                 let str_data = match &*rx.borrow() {
-                    Some(obj) => serde_json::to_string(obj).unwrap_or_default(),
+                    Some(obj) => {
+                        let now = Local::now();
+                        let req = DisplayRequest {
+                            current_time: now.format("%Y-%m-%dT%H:%M:%S%.6f%:z").to_string(),
+                            padding: "          ".to_string(),
+                            calendar_info: obj.clone(),
+                        };
+
+                        serde_json::to_string(&req).unwrap_or_default()
+                    }
                     None => continue,
                 };
 
+                // println!("Serialized data {}", &str_data);
+
                 adapter.stop_scan().await.ok();
 
-                if let Err(e) = write_data(&peripheral, str_data.as_bytes(), uuid).await {
+                if let Err(e) = write_data(&peripheral, str_data.as_bytes(), char_uuid).await {
                     println!("Error writing calendar data: {}", e);
                 } else {
                     println!("Wrote calendar data!");
